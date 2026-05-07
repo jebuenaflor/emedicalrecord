@@ -14,10 +14,10 @@ chmod -R 755 /var/www/html/openemr
 chmod -R 700 /var/www/html/openemr/sites/default/documents
 
 # 3. Create the database
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS openemr;"
-mysql -u root -p -e "CREATE USER IF NOT EXISTS 'openemr'@'localhost' IDENTIFIED BY 'YOUR_PASSWORD';"
-mysql -u root -p -e "GRANT ALL ON openemr.* TO 'openemr'@'localhost';"
-mysql -u root -p openemr < openemr_db.sql
+mysql -u root -p"$ROOT_PASS" -e "CREATE DATABASE IF NOT EXISTS openemr;"
+mysql -u root -p"$ROOT_PASS" -e "CREATE USER IF NOT EXISTS 'openemr'@'localhost' IDENTIFIED BY '$DB_PASS';"
+mysql -u root -p"$ROOT_PASS" -e "GRANT ALL ON openemr.* TO 'openemr'@'localhost';"
+mysql -u root -p"$ROOT_PASS" openemr < openemr_db.sql
 
 # 4. Generate sqlconf.php
 cat > /var/www/html/openemr/sites/default/sqlconf.php <<EOF
@@ -25,7 +25,7 @@ cat > /var/www/html/openemr/sites/default/sqlconf.php <<EOF
 \$host   = 'localhost';
 \$port   = '3306';
 \$login  = 'openemr';
-\$pass   = 'YOUR_PASSWORD';
+\$pass   = '$DB_PASS';
 \$dbase  = 'openemr';
 \$disable_utf8_flag = false;
 \$transaction_support = true;
