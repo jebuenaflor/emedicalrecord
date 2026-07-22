@@ -3,9 +3,8 @@
 /**
  * Consultation report with CSV and XLSX exports.
  *
- * Install this file in interface/reports and add it to the Reports menu using
- * Administration > Menus.  It reads OpenEMR's standard encounter, patient,
- * calendar-category, and user tables.
+ * Parameters: date_start, date_end, category, physician, and format.
+ * Set format to csv or xlsx to download the report; omit it to view the report.
  *
  * @package OpenEMR
  * @license https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
@@ -19,14 +18,6 @@ use OpenEMR\Common\Twig\TwigContainer;
 use OpenEMR\Core\Header;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-
-/*
- * OpenEMR has no standard "nurse on duty" encounter field.  If the site keeps
- * it in a custom form/table, replace the expression below and add its JOIN to
- * consultationReportSql().  For example: CONCAT_WS(' ', nurse.fname,
- * nurse.mname, nurse.lname) and LEFT JOIN users AS nurse ON nurse.id = cf.nurse_id.
- */
-const CONSULTATION_NURSE_EXPRESSION = "''";
 
 if (!AclMain::aclCheckCore('patients', 'med')) {
     echo (new TwigContainer(null, $GLOBALS['kernel']))->getTwig()->render(
@@ -46,7 +37,7 @@ function consultationReportDate(string $value, string $fallback): string
     return $date && $date->format('Y-m-d') === $value ? $value : $fallback;
 }
 
-function consultationReportSql(string $fromDate, string $toDate, int $categoryId, int $providerId): array
+function consultationReportSql(string $fromDate, string $toDate, string $category, int $providerId): array
 {
     $bind = [$fromDate . ' 00:00:00', $toDate . ' 23:59:59'];
     $sql = "SELECT
@@ -54,24 +45,24 @@ function consultationReportSql(string $fromDate, string $toDate, int $categoryId
                 fe.encounter AS transaction_id,
                 DATE(fe.date) AS date_of_consult,
                 TIME(fe.date) AS consult_time,
-                CONCAT_WS(' ', p.lname, p.fname, NULLIF(p.mname, '')) AS patient_name,
+                CONCAT_WS(' ', p.fname, NULLIF(p.mname, ''), p.lname) AS patient_name,
                 TIMESTAMPDIFF(YEAR, p.dob, DATE(fe.date))
                     - (DATE_FORMAT(DATE(fe.date), '%m%d') < DATE_FORMAT(p.dob, '%m%d')) AS age,
                 p.sex AS gender,
-                fe.class_code AS classification,
-                COALESCE(cat.pc_catname, '') AS category,
-                COALESCE(NULLIF(fe.encounter_type_description, ''), NULLIF(fe.reason, '')) AS consultation_type,
-                CONCAT_WS(' ', physician.lname, physician.fname, NULLIF(physician.mname, '')) AS physician_on_duty,
-                " . CONSULTATION_NURSE_EXPRESSION . " AS nurse_on_duty
+                fe.encounter_type AS classification,
+                fe.visit_category AS category,
+                fe.encounter_type AS consultation_type,
+                CONCAT_WS(' ', physician.fname, NULLIF(physician.mname, ''), physician.lname) AS physician_on_duty,
+                CONCAT_WS(' ', nurse.fname, NULLIF(nurse.mname, ''), nurse.lname) AS nurse_on_duty
             FROM form_encounter AS fe
             INNER JOIN patient_data AS p ON p.pid = fe.pid
             LEFT JOIN users AS physician ON physician.id = fe.provider_id
-            LEFT JOIN openemr_postcalendar_categories AS cat ON cat.pc_catid = fe.pc_catid
+            LEFT JOIN users AS nurse ON nurse.id = fe.supervisor_id
             WHERE fe.date >= ? AND fe.date <= ? ";
 
-    if ($categoryId > 0) {
-        $sql .= 'AND fe.pc_catid = ? ';
-        $bind[] = $categoryId;
+    if ($category !== '') {
+        $sql .= 'AND fe.visit_category = ? ';
+        $bind[] = $category;
     }
     if ($providerId > 0) {
         $sql .= 'AND fe.provider_id = ? ';
@@ -82,9 +73,9 @@ function consultationReportSql(string $fromDate, string $toDate, int $categoryId
     return [$sql, $bind];
 }
 
-function consultationReportRows(string $fromDate, string $toDate, int $categoryId, int $providerId): array
+function consultationReportRows(string $fromDate, string $toDate, string $category, int $providerId): array
 {
-    [$sql, $bind] = consultationReportSql($fromDate, $toDate, $categoryId, $providerId);
+    [$sql, $bind] = consultationReportSql($fromDate, $toDate, $category, $providerId);
     $statement = sqlStatement($sql, $bind);
     $rows = [];
     while ($row = sqlFetchArray($statement)) {
@@ -108,17 +99,17 @@ function consultationReportExportRows(array $rows): array
 }
 
 $today = date('Y-m-d');
-$fromDate = consultationReportDate($_REQUEST['from_date'] ?? $today, $today);
-$toDate = consultationReportDate($_REQUEST['to_date'] ?? $today, $today);
+$fromDate = consultationReportDate($_REQUEST['date_start'] ?? $today, $today);
+$toDate = consultationReportDate($_REQUEST['date_end'] ?? $today, $today);
 if ($toDate < $fromDate) {
     [$fromDate, $toDate] = [$toDate, $fromDate];
 }
-$categoryId = max(0, (int) ($_REQUEST['category_id'] ?? 0));
-$providerId = max(0, (int) ($_REQUEST['provider_id'] ?? 0));
-$action = $_POST['action'] ?? '';
+$category = trim((string) ($_REQUEST['category'] ?? ''));
+$providerId = max(0, (int) ($_REQUEST['physician'] ?? 0));
+$action = strtolower((string) ($_REQUEST['format'] ?? ''));
 
 if (in_array($action, ['csv', 'xlsx'], true)) {
-    $rows = consultationReportExportRows(consultationReportRows($fromDate, $toDate, $categoryId, $providerId));
+    $rows = consultationReportExportRows(consultationReportRows($fromDate, $toDate, $category, $providerId));
     $filename = 'consultation_report_' . $fromDate . '_to_' . $toDate;
 
     if ($action === 'csv') {
@@ -151,7 +142,7 @@ if (in_array($action, ['csv', 'xlsx'], true)) {
 }
 
 $categories = [];
-$categoryStatement = sqlStatement('SELECT pc_catid, pc_catname FROM openemr_postcalendar_categories WHERE pc_active = 1 ORDER BY pc_catname');
+$categoryStatement = sqlStatement("SELECT DISTINCT visit_category FROM form_encounter WHERE visit_category IS NOT NULL AND visit_category <> '' ORDER BY visit_category");
 while ($category = sqlFetchArray($categoryStatement)) {
     $categories[] = $category;
 }
@@ -160,7 +151,7 @@ $providerStatement = sqlStatement("SELECT id, fname, mname, lname FROM users WHE
 while ($provider = sqlFetchArray($providerStatement)) {
     $providers[] = $provider;
 }
-$rows = consultationReportRows($fromDate, $toDate, $categoryId, $providerId);
+$rows = consultationReportRows($fromDate, $toDate, $category, $providerId);
 ?>
 <!doctype html>
 <html lang="en">
@@ -173,11 +164,11 @@ $rows = consultationReportRows($fromDate, $toDate, $categoryId, $providerId);
 <form method="post" action="consultation_report.php" class="my-3" onsubmit="return top.restoreSession()">
     <input type="hidden" name="csrf_token_form" value="<?php echo attr(CsrfUtils::collectCsrfToken()); ?>">
     <div class="form-row align-items-end">
-        <div class="col-md-2"><label for="from_date"><?php echo xlt('From'); ?></label><input class="form-control datepicker" id="from_date" name="from_date" value="<?php echo attr($fromDate); ?>"></div>
-        <div class="col-md-2"><label for="to_date"><?php echo xlt('To'); ?></label><input class="form-control datepicker" id="to_date" name="to_date" value="<?php echo attr($toDate); ?>"></div>
-        <div class="col-md-3"><label for="category_id"><?php echo xlt('Category'); ?></label><select class="form-control" id="category_id" name="category_id"><option value="0"><?php echo xlt('All'); ?></option><?php foreach ($categories as $category) { ?><option value="<?php echo attr($category['pc_catid']); ?>"<?php echo $categoryId === (int) $category['pc_catid'] ? ' selected' : ''; ?>><?php echo text(xl_appt_category($category['pc_catname'])); ?></option><?php } ?></select></div>
-        <div class="col-md-3"><label for="provider_id"><?php echo xlt('Physician'); ?></label><select class="form-control" id="provider_id" name="provider_id"><option value="0"><?php echo xlt('All'); ?></option><?php foreach ($providers as $provider) { ?><option value="<?php echo attr($provider['id']); ?>"<?php echo $providerId === (int) $provider['id'] ? ' selected' : ''; ?>><?php echo text(trim($provider['lname'] . ', ' . $provider['fname'] . ' ' . $provider['mname'])); ?></option><?php } ?></select></div>
-        <div class="col-md-2"><button class="btn btn-primary" name="action" value="view"><?php echo xlt('Search'); ?></button> <button class="btn btn-secondary" name="action" value="csv"><?php echo xlt('CSV'); ?></button> <button class="btn btn-secondary" name="action" value="xlsx"><?php echo xlt('XLSX'); ?></button></div>
+        <div class="col-md-2"><label for="date_start"><?php echo xlt('From'); ?></label><input class="form-control datepicker" id="date_start" name="date_start" value="<?php echo attr($fromDate); ?>"></div>
+        <div class="col-md-2"><label for="date_end"><?php echo xlt('To'); ?></label><input class="form-control datepicker" id="date_end" name="date_end" value="<?php echo attr($toDate); ?>"></div>
+        <div class="col-md-3"><label for="category"><?php echo xlt('Category'); ?></label><select class="form-control" id="category" name="category"><option value=""><?php echo xlt('All'); ?></option><?php foreach ($categories as $categoryRow) { ?><option value="<?php echo attr($categoryRow['visit_category']); ?>"<?php echo $category === $categoryRow['visit_category'] ? ' selected' : ''; ?>><?php echo text($categoryRow['visit_category']); ?></option><?php } ?></select></div>
+        <div class="col-md-3"><label for="physician"><?php echo xlt('Physician'); ?></label><select class="form-control" id="physician" name="physician"><option value="0"><?php echo xlt('All'); ?></option><?php foreach ($providers as $provider) { ?><option value="<?php echo attr($provider['id']); ?>"<?php echo $providerId === (int) $provider['id'] ? ' selected' : ''; ?>><?php echo text(trim($provider['lname'] . ', ' . $provider['fname'] . ' ' . $provider['mname'])); ?></option><?php } ?></select></div>
+        <div class="col-md-2"><button class="btn btn-primary"><?php echo xlt('Search'); ?></button> <button class="btn btn-secondary" name="format" value="csv"><?php echo xlt('CSV'); ?></button> <button class="btn btn-secondary" name="format" value="xlsx"><?php echo xlt('XLSX'); ?></button></div>
     </div>
 </form>
 <div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><?php foreach (consultationReportHeaders() as $header) { ?><th><?php echo text(xl($header)); ?></th><?php } ?></tr></thead><tbody><?php foreach ($rows as $row) { ?><tr><?php foreach ($row as $value) { ?><td><?php echo text($value); ?></td><?php } ?></tr><?php } ?></tbody></table></div>
