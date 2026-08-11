@@ -143,8 +143,8 @@ if (in_array($action, ['csv', 'xlsx'], true)) {
 
 $categories = [];
 $categoryStatement = sqlStatement("SELECT DISTINCT visit_category FROM form_encounter WHERE visit_category IS NOT NULL AND visit_category <> '' ORDER BY visit_category");
-while ($category = sqlFetchArray($categoryStatement)) {
-    $categories[] = $category;
+while ($categoryRow = sqlFetchArray($categoryStatement)) {
+    $categories[] = $categoryRow;
 }
 $providers = [];
 $providerStatement = sqlStatement("SELECT id, fname, mname, lname FROM users WHERE active = 1 ORDER BY lname, fname");

@@ -1372,6 +1372,18 @@
               "patients",
               "med"
             ]
+          },
+          {
+            "label": "Annex A",
+            "menu_id": "rep0",
+            "target": "rep",
+            "url": "/interface/reports/consultation_report.php",
+            "children": [],
+            "requirement": 0,
+            "acl_req": [
+              "patients",
+              "med"
+            ]
           }
         ],
         "requirement": 0
