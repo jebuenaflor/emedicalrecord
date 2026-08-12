@@ -49,9 +49,9 @@ function consultationReportSql(string $fromDate, string $toDate, string $categor
                 TIMESTAMPDIFF(YEAR, p.dob, DATE(fe.date))
                     - (DATE_FORMAT(DATE(fe.date), '%m%d') < DATE_FORMAT(p.dob, '%m%d')) AS age,
                 p.sex AS gender,
-                fe.encounter_type AS classification,
-                fe.visit_category AS category,
-                fe.encounter_type AS consultation_type,
+                fe.encounter_type_description AS classification,
+                fe.pc_catid AS category,
+                fe.encounter_type_description AS consultation_type,
                 CONCAT_WS(' ', physician.fname, NULLIF(physician.mname, ''), physician.lname) AS physician_on_duty,
                 CONCAT_WS(' ', nurse.fname, NULLIF(nurse.mname, ''), nurse.lname) AS nurse_on_duty
             FROM form_encounter AS fe
@@ -61,11 +61,11 @@ function consultationReportSql(string $fromDate, string $toDate, string $categor
             WHERE fe.date >= ? AND fe.date <= ? ";
 
     if ($category !== '') {
-        $sql .= 'AND fe.visit_category = ? ';
+        $sql .= 'AND fe.pc_catid = ? ';
         $bind[] = $category;
     }
     if ($providerId > 0) {
-        $sql .= 'AND fe.provider_id = ? ';
+        $sql .= 'AND fe.pc_catid = ? ';
         $bind[] = $providerId;
     }
 
